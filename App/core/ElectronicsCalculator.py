@@ -37,11 +37,21 @@ class ElectronicsCalculator:
             raise ValueError(f"Unknown unit: {unit}")
     
     @staticmethod
-    def _check_saturation(Vc, Vcc):
-        """Helper to check bias condition"""
-        if Vc < Vcc * 0.4:
+    def _check_saturation(Vc, Ve, Vcc):
+        """
+        Check transistor bias condition.
+        
+        Args:
+            Vc: Collector voltage (V)
+            Ve: Emitter voltage (V)
+            Vcc: Supply voltage (V)
+        
+        Returns:
+            str: Bias status description
+        """
+        if Vc < Ve + 0.1:                     # Vc very close to Ve → saturated
             return "saturated (valve fully open)"
-        elif Vc > Vcc * 0.6:
+        elif Vc > Vcc - 0.5:                  # Vc near Vcc → cutoff
             return "cutoff (valve closed)"
         else:
             return "active (valve half open) - good amplification"
@@ -74,8 +84,17 @@ class ElectronicsCalculator:
         
         V_Rc = Ic * Rc
         Vc = Vcc - V_Rc
-        Vce = Vc - Ve
+        if Vc < Ve:
+            # Transistor is saturated, Vc cannot go below Ve
+            Vc = Ve + 0.05  # Slightly above Ve
+            V_Rc = Vcc - Vc
+            Ic = V_Rc / Rc
+            # Recalculate Ie, Ib from Ic
+            Ie = Ic * ((beta + 1) / beta)
+            Ib = Ie / (beta + 1)
         
+        Vce = Vc - Ve
+    
         # Gain
         gain_approx = Rc / Re
         gm = Ic / 0.026
@@ -117,7 +136,7 @@ class ElectronicsCalculator:
                 "Rc": round(P_Rc * 1000, 1),
                 "Re": round(P_Re * 1000, 1)
             },
-            "bias_status": self._check_saturation(Vc, Vcc),
+            "bias_status": self._check_saturation(Vc,Ve,Vcc),
             "phase_shift": "180° (inverted)"
         }
     
@@ -148,7 +167,28 @@ class ElectronicsCalculator:
         
         V_Rc = Ic * Rc
         Vc = Vcc - V_Rc
-        Vcb = Vc - Vb  # Note: CB, not CE
+
+        if Ve < 0:
+            Ve = 0.05  # Can't go below 0V
+            # Recalculate Vb? No, Vb is fixed externally
+            # But Ve cannot be negative!
+        
+        Ie = Ve / Re
+        Ic = Ie * (beta / (beta + 1))
+        Ib = Ie / (beta + 1)
+        
+        V_Rc = Ic * Rc
+        Vc = Vcc - V_Rc
+        
+        # *** SATURATION CLAMP FOR Vc ***
+        if Vc < Ve:
+            Vc = Ve + 0.05
+            V_Rc = Vcc - Vc
+            Ic = V_Rc / Rc
+            Ie = Ic * ((beta + 1) / beta)
+            Ib = Ie / (beta + 1)
+        
+        Vcb = Vc - Vb
         
         # Gain (same as CE but non-inverting)
         gain_approx = Rc / Re
@@ -191,7 +231,7 @@ class ElectronicsCalculator:
                 "Rc": round(P_Rc * 1000, 1),
                 "Re": round(P_Re * 1000, 1)
             },
-            "bias_status": self._check_saturation(Vc, Vcc),
+            "bias_status": self._check_saturation(Vc,Ve,Vcc),
             "phase_shift": "0° (non-inverting)"
         }
     
@@ -219,27 +259,51 @@ class ElectronicsCalculator:
         Ie = Ve / Re
         Ic = Ie * (beta / (beta + 1))
         Ib = Ie / (beta + 1)
+
+        Vc = Vcc
+        
+        # *** SATURATION CLAMP FOR Ve ***
+        if Ve < 0:
+            Ve = 0.05  # Can't go below 0V
+        if Ve > Vcc:
+            Ve = Vcc - 0.05  # Can't exceed Vcc
+        
+        # Recalculate currents after clamp
+        Ie = Ve / Re
+        Ic = Ie * (beta / (beta + 1))
+        Ib = Ie / (beta + 1)
         
         Vce = Vcc - Ve  # Collector is at Vcc, emitter below
-        Vc = Vcc
         
         # Gain (≈1)
         gain_approx = 0.98  # typical
-        gm = Ic / 0.026
-        re = 0.026 / Ie          # intrinsic emitter resistance
-        rpi = beta * re          # = β/gm
+        gm = Ic / 0.026 if Ic > 0 else 0
+        re = 0.026 / Ie if Ie > 0 else 1000  # intrinsic emitter resistance
+        rpi = beta * re if beta > 0 else 0
 
         # Exact gain:
-        gain_exact = (beta * Re) / (Rsource + rpi + (beta + 1) * Re)
+        if Rsource + rpi + (beta + 1) * Re > 0:
+            gain_exact = (beta * Re) / (Rsource + rpi + (beta + 1) * Re)
+        else:
+            gain_exact = 0
 
-        # Output imped
         # Input/Output Impedance
-        Rin = beta * Re  # very high
-        Rout = (Rsource / beta) + re
+        Rin = beta * Re if Re > 0 else 0  # very high
+        Rout = (Rsource / beta) + re if beta > 0 else re
         
         # Power
         P_Q = Vce * Ic
         P_Re = Ve * Ie
+        
+        # ================================================================
+        # BIAS STATUS FOR COMMON COLLECTOR (Fixed!)
+        # ================================================================
+        if Ve < 0.2:
+            bias_status = "cutoff (valve closed)"
+        elif Ve > Vcc - 0.2:
+            bias_status = "saturated (valve fully open)"
+        else:
+            bias_status = "active (valve half open) - good amplification"
         
         return {
             "configuration": "Common Collector (Emitter Follower)",
@@ -266,7 +330,7 @@ class ElectronicsCalculator:
                 "transistor": round(P_Q * 1000, 1),
                 "Re": round(P_Re * 1000, 1)
             },
-            "bias_status": self._check_saturation(Ve, Vcc),
+            "bias_status": bias_status,  # ✅ FIXED
             "phase_shift": "0° (non-inverting)"
         }
     
