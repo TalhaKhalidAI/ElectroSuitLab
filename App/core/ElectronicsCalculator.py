@@ -49,17 +49,25 @@ class ElectronicsCalculator:
         Returns:
             str: Bias status description
         """
-        if Vc < Ve + 0.1:                     # Vc very close to Ve → saturated
+        Vce = Vc - Ve
+        
+        # SATURATION: Vce is less than ~0.5V AND Vc is not near Vcc
+        # For Test8: Vce=0.37V, Vc=2.76V (not near Vcc=3V) → SATURATED
+        if Vce < 0.5 and Vc < Vcc - 0.5:
             return "saturated (valve fully open)"
-        elif Vc > Vcc - 0.5:                  # Vc near Vcc → cutoff
+        
+        # CUTOFF: Very little collector current (Vc near Vcc)
+        if Vc > Vcc - 0.5 and Vce > 1.0:
             return "cutoff (valve closed)"
-        else:
-            return "active (valve half open) - good amplification"
-    
+        
+        # ACTIVE: Everything else
+        return "active (valve half open) - good amplification"
     # ================================================================
     # COMMON EMITTER (Base in, Collector out, Emitter ground)
     # ================================================================
-    def common_emitter(self, Vcc: float, Rc: float, Re: float, R1: float, R2: float, beta: float, RL: float = float('inf')):
+    def common_emitter(self, Vcc: float, Rc: float, Re: float, R1: float, R2: float, 
+                    beta: float, RL: float = float('inf'), bypassed: bool = True,
+                    ccb_pf: float = None, freq_hz: float = None):
         """
         Common Emitter Amplifier Calculator
         
@@ -71,47 +79,161 @@ class ElectronicsCalculator:
             R2: Base bias resistor to GND (Ω)
             beta: Transistor current gain (hFE)
             RL: Load resistor (Ω), default = infinity (no load)
+            bypassed: If True, Re is bypassed by capacitor (high gain)
+                    If False, Re is unbypassed (gain ≈ Rc/Re)
+            ccb_pf: Collector-base capacitance in pF (for Miller effect)
+                    Example: BC547 = 4pF, 2N2222 = 8pF, 2N3904 = 4pF
+                    If None or 0, Miller effect is skipped
+            freq_hz: Operating frequency in Hz (for Miller reactance)
+                    If None or 0, only capacitance is calculated
         
         Returns:
-            dict: All calculated values
+            dict: All calculated values including Miller effect if enabled
         """
-        # DC bias
+        import math
+        
+        # ============================================================
+        # DC BIAS CALCULATIONS
+        # ============================================================
         Vb = Vcc * (R2 / (R1 + R2))
         Ve = Vb - 0.6
-        Ie = Ve / Re
-        Ic = Ie * (beta / (beta + 1))
-        Ib = Ie / (beta + 1)
+        
+        # Clamp Ve to reasonable range
+        if Ve < 0.05:
+            Ve = 0.05
+        if Ve > Vcc - 0.05:
+            Ve = Vcc - 0.05
+        
+        Ie = Ve / Re if Re > 0 else 0
+        Ic = Ie * (beta / (beta + 1)) if beta > 0 else 0
+        Ib = Ie / (beta + 1) if beta > 0 else 0
         
         V_Rc = Ic * Rc
         Vc = Vcc - V_Rc
+        
+        # Saturation clamp
         if Vc < Ve:
-            # Transistor is saturated, Vc cannot go below Ve
-            Vc = Ve + 0.05  # Slightly above Ve
+            Vc = Ve + 0.05
             V_Rc = Vcc - Vc
-            Ic = V_Rc / Rc
-            # Recalculate Ie, Ib from Ic
-            Ie = Ic * ((beta + 1) / beta)
-            Ib = Ie / (beta + 1)
+            if Rc > 0:
+                Ic = V_Rc / Rc
+            Ie = Ic * ((beta + 1) / beta) if beta > 0 else 0
+            Ib = Ie / (beta + 1) if beta > 0 else 0
         
         Vce = Vc - Ve
-    
-        # Gain
-        gain_approx = Rc / Re
-        gm = Ic / 0.026
-        Rc_eff = Rc if RL == float('inf') else (Rc * RL) / (Rc + RL)
-        gain_exact = -gm * Rc_eff
         
-        # Power
+        # ============================================================
+        # BIAS STATUS
+        # ============================================================
+        bias_status = self._check_saturation(Vc, Ve, Vcc)
+        
+        # ============================================================
+        # GAIN CALCULATIONS (initialize defaults)
+        # ============================================================
+        gm = 0
+        re_prime = 0
+        gain_exact = 0
+        gain_approx = 0
+        gain_description = ""
+        miller = None
+        Rin = 0
+        
+        # Only calculate gain if transistor is in active region
+        if "active" in bias_status and Ic > 0:
+            re_prime = 0.026 / Ic
+            Rc_eff = Rc if RL == float('inf') else (Rc * RL) / (Rc + RL)
+            
+            # Calculate input impedance (needed for bandwidth calculation)
+            if Re > 0 and beta > 0 and R1 > 0 and R2 > 0:
+                Rin = 1 / ((1/R1) + (1/R2) + (1/(beta * Re)))
+            
+            if bypassed:
+                # High gain mode: Re is shorted by capacitor
+                gm = Ic / 0.026
+                gain_exact = -gm * Rc_eff
+                gain_description = "High gain (Re bypassed by capacitor)"
+                gain_approx = Rc / re_prime if re_prime > 0 else 0
+            else:
+                # Low gain mode: Re is NOT bypassed
+                gm = 1 / re_prime if re_prime > 0 else 0
+                gain_exact = -Rc_eff / (Re + re_prime) if (Re + re_prime) > 0 else 0
+                gain_description = "Low gain (Re unbypassed)"
+                gain_approx = Rc / Re if Re > 0 else 0
+            
+            # ========================================================
+            # MILLER EFFECT CALCULATION (OPTIONAL)
+            # ========================================================
+            if ccb_pf is not None and ccb_pf > 0 and abs(gain_exact) > 0.1:
+                gain_magnitude = abs(gain_exact)
+                cm_pf = ccb_pf * (1 + gain_magnitude)
+                
+                miller = {
+                    "ccb_pf": ccb_pf,
+                    "gain_magnitude": round(gain_magnitude, 1),
+                    "miller_capacitance_pf": round(cm_pf, 1),
+                    "formula": f"Cm = Ccb × (1+Av) = {ccb_pf}pF × (1+{gain_magnitude:.0f}) = {round(cm_pf,1)}pF"
+                }
+                
+                # Add frequency-dependent calculations if frequency provided
+                if freq_hz is not None and freq_hz > 0:
+                    # Miller reactance at operating frequency
+                    xc_miller = 1 / (2 * math.pi * freq_hz * (cm_pf * 1e-12))
+                    miller["at_frequency"] = {
+                        "hz": freq_hz,
+                        "khz": round(freq_hz / 1000, 2),
+                        "mhz": round(freq_hz / 1e6, 4),
+                        "miller_reactance_ohm": round(xc_miller, 0),
+                        "miller_reactance_kohm": round(xc_miller / 1000, 1)
+                    }
+                    
+                    # Bandwidth limitation due to Miller effect
+                    if Rin > 0:
+                        # Typical Cbe (base-emitter capacitance) is 10-20pF for small signal BJTs
+                        cbe_pf = 12  # Typical value
+                        c_input_total_pf = cm_pf + cbe_pf
+                        f_cutoff_hz = 1 / (2 * math.pi * Rin * (c_input_total_pf * 1e-12))
+                        
+                        miller["bandwidth"] = {
+                            "cbe_pf": cbe_pf,
+                            "c_input_total_pf": round(c_input_total_pf, 1),
+                            "source_impedance_ohm": round(Rin, 0),
+                            "cutoff_frequency_hz": round(f_cutoff_hz, 0),
+                            "cutoff_frequency_khz": round(f_cutoff_hz / 1000, 1),
+                            "cutoff_frequency_mhz": round(f_cutoff_hz / 1e6, 2),
+                            "warning": f"Amplifier gain drops above {round(f_cutoff_hz/1000,1)}kHz due to Miller effect"
+                        }
+                        
+                        # Check if operating frequency exceeds bandwidth
+                        if freq_hz > f_cutoff_hz:
+                            miller["bandwidth"]["issue"] = f"⚠️ Operating frequency ({round(freq_hz/1000,0)}kHz) exceeds bandwidth! Gain will be significantly reduced."
+                        else:
+                            miller["bandwidth"]["issue"] = f"✅ Bandwidth sufficient for {round(freq_hz/1000,0)}kHz operation"
+                else:
+                    # No frequency provided, just show DC/static Miller effect
+                    miller["note"] = "Frequency not provided. Miller reactance and bandwidth not calculated."
+        else:
+            gain_description = "Gain = 0 (transistor not in active region)"
+        
+        # ============================================================
+        # POWER CALCULATIONS
+        # ============================================================
         P_Q = Vce * Ic
         P_Rc = V_Rc * Ic
         P_Re = Ve * Ie
         
-        # Input/Output Impedance
-        Rin = 1 / ((1/R1) + (1/R2) + (1/(beta * Re)))
+        # ============================================================
+        # IMPEDANCE CALCULATIONS
+        # ============================================================
+        if Re > 0 and beta > 0 and R1 > 0 and R2 > 0 and Rin == 0:
+            Rin = 1 / ((1/R1) + (1/R2) + (1/(beta * Re)))
         Rout = Rc
         
+        # ============================================================
+        # RETURN RESULTS
+        # ============================================================
         return {
             "configuration": "Common Emitter",
+            "bypass_state": gain_description,
             "voltages": {
                 "Vb": round(Vb, 2),
                 "Ve": round(Ve, 2),
@@ -125,7 +247,8 @@ class ElectronicsCalculator:
             },
             "gain": {
                 "approx": round(gain_approx, 1),
-                "exact": round(gain_exact, 1)
+                "exact": round(gain_exact, 1),
+                "description": gain_description
             },
             "impedance": {
                 "Zin_ohm": round(Rin, 0),
@@ -136,8 +259,13 @@ class ElectronicsCalculator:
                 "Rc": round(P_Rc * 1000, 1),
                 "Re": round(P_Re * 1000, 1)
             },
-            "bias_status": self._check_saturation(Vc,Ve,Vcc),
-            "phase_shift": "180° (inverted)"
+            "bias_status": bias_status,
+            "phase_shift": "180° (inverted)",
+            "internal": {
+                "gm_mS": round(gm * 1000, 2),
+                "re_prime_ohm": round(re_prime, 2)
+            },
+            "miller": miller
         }
     
     # ================================================================

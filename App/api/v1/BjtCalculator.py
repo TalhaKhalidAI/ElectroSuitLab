@@ -12,10 +12,10 @@ def get_calculator() -> ElectronicsCalculator:
 
 bjt_route=APIRouter(prefix="/bjt_calculator",tags=["bjt-calculator"])
 
-@bjt_route.post("/cmomon_emitter")
+@bjt_route.post("/cmmon_emitter")
 async def common_emitttor_calculator(cm:CEM,ec:ElectronicsCalculator=Depends(get_calculator)):
     try:
-        cev=ec.common_emitter(cm.vcc,cm._rc_ohm,cm._re_ohm,cm._r1_ohm,cm._r2_ohm,cm.beta,cm._rl_ohm)
+        cev=ec.common_emitter(cm.vcc,cm._rc_ohm,cm._re_ohm,cm._r1_ohm,cm._r2_ohm,cm.beta,cm._rl_ohm,cm.bypass,cm.ccb_pf,cm.freq_hz)
         return cev
         pass
     except Exception as e:

@@ -28,6 +28,9 @@ class CEM(BaseModel):
     rl: Optional[float] = Field(None, gt=0)
     rl_unit: ResistorUnit = ResistorUnit.KOHM
 
+    bypass:float=True
+    ccb_pf:Optional[float]=None
+    freq_hz:Optional[float]=None
     # Store converted values
     _rc_ohm: float = None
     _re_ohm: float = None
