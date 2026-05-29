@@ -365,61 +365,90 @@ class ElectronicsCalculator:
                             Vth: float, K: float, RL: float = float('inf'), 
                             Rs: float = 0):
         """
-        Common Source MOSFET Amplifier Calculator (Corrected)
+        Common Source MOSFET Amplifier Calculator
         """
         # Gate voltage (voltage divider — no gate current!)
         Vg = Vdd * (R2 / (R1 + R2))
         
-        if Rs == 0:
-            Vgs = Vg
-            Id = K * (Vgs - Vth)**2 if Vgs > Vth else 0
+        # Check cutoff condition first
+        if Vg <= Vth:
+            # MOSFET is OFF
+            Id = 0
             Vs = 0
+            Vgs = Vg
+            Vd = Vdd
+            Vds = Vdd
+            Vov = 0
+            region = "cutoff"
+            gm = 0
+            gain = 0
+            Zin = (R1 * R2) / (R1 + R2)
+            Zout = Rd
+            P_Q = 0
+            P_Rd = 0
+            P_Rs = 0
         else:
-            a = K * Rs**2
-            b = -(2 * K * Rs * (Vg - Vth) + 1)
-            c = K * (Vg - Vth)**2
-            discriminant = b**2 - 4*a*c
-            if discriminant < 0:
-                Id = 0
-            else:
-                Id = (-b - math.sqrt(discriminant)) / (2*a)
-            Vs = Id * Rs
-            Vgs = Vg - Vs
-        
-        Vd_calc = Vdd - (Id * Rd)
-        
-        # *** SATURATION CLAMP (FIX) ***
-        if Vd_calc < 0.2:
-            Vd = 0.2
-            Id = (Vdd - Vd) / Rd
-            if Rs > 0:
-                Vs = Id * Rs
-                Vgs = Vg - Vs
-            else:
-                Vs = 0
+            if Rs == 0:
                 Vgs = Vg
-            Vds = Vd - Vs
-        else:
-            Vd = Vd_calc
-            Vds = Vd - Vs
-        
-        Vov = Vgs - Vth if Vgs > Vth else 0
-        
-        if Vds >= Vov and Vov > 0:
-            region = "saturation (active) — good for amplification"
-        else:
-            region = "triode (linear) — not ideal for amplification"
-        
-        gm = 2 * K * Vov if Vov > 0 else 0
-        Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
-        gain = -gm * Rd_eff
-        
-        Zin = (R1 * R2) / (R1 + R2)
-        Zout = Rd
-        
-        P_Q = Vds * Id
-        P_Rd = (Vdd - Vd) * Id
-        P_Rs = Vs * Id if Rs > 0 else 0
+                Id = K * (Vgs - Vth)**2 if Vgs > Vth else 0
+                Vs = 0
+            else:
+                a = K * Rs**2
+                b = -(2 * K * Rs * (Vg - Vth) + 1)
+                c = K * (Vg - Vth)**2
+                discriminant = b**2 - 4*a*c
+                if discriminant < 0:
+                    Id = 0
+                    Vs = 0
+                    Vgs = Vg
+                else:
+                    Id = (-b - math.sqrt(discriminant)) / (2*a)
+                    if Id < 0:
+                        Id = 0
+                        Vs = 0
+                        Vgs = Vg
+                    else:
+                        Vs = Id * Rs
+                        Vgs = Vg - Vs
+            
+            Vd_calc = Vdd - (Id * Rd)
+            
+            # *** SATURATION CLAMP (FIXED) ***
+            # Only clamp Vd, DO NOT recalculate Id
+            if Vd_calc < 0.2:
+                Vd = 0.2
+                # Id remains from MOSFET equation
+                if Rs > 0:
+                    # Vs stays the same (Id unchanged)
+                    Vs = Id * Rs
+                    Vgs = Vg - Vs
+                else:
+                    Vs = 0
+                    Vgs = Vg
+                Vds = Vd - Vs
+            else:
+                Vd = Vd_calc
+                Vds = Vd - Vs
+            
+            Vov = Vgs - Vth if Vgs > Vth else 0
+            
+            # Check if in saturation (active) region
+            # For MOSFET: Vds >= Vgs - Vth
+            if Vds >= Vov and Vov > 0:
+                region = "saturation (active) — good for amplification"
+            else:
+                region = "triode (linear) — not ideal for amplification"
+            
+            gm = 2 * K * Vov if Vov > 0 else 0
+            Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
+            gain = -gm * Rd_eff if gm > 0 else 0
+            
+            Zin = (R1 * R2) / (R1 + R2)
+            Zout = Rd
+            
+            P_Q = Vds * Id
+            P_Rd = (Vdd - Vd) * Id
+            P_Rs = Vs * Id if Rs > 0 else 0
         
         return {
             "configuration": "Common Source (MOSFET)",
@@ -450,81 +479,126 @@ class ElectronicsCalculator:
             "region": region,
             "phase_shift": "180° (inverted)"
         }
-
-
     # ================================================================
     # MOSFET COMMON DRAIN (Source Follower) — Gate in, Source out
     # ================================================================
+
     def common_drain_mosfet(self, Vdd: float, R1: float, R2: float, Rs: float,
                             Vth: float, K: float, Rsource: float = 0):
         """
         Common Drain MOSFET Amplifier (Source Follower)
-        
-        Args:
-            Vdd: Supply voltage (V)
-            R1: Gate bias resistor to Vdd (Ω)
-            R2: Gate bias resistor to GND (Ω)
-            Rs: Source resistor (Ω)
-            Vth: Threshold voltage (V)
-            K: Transconductance parameter (A/V²)
-            Rsource: Source resistance (Ω), default = 0
-        
-        Returns:
-            dict: All calculated values
         """
+        import math
+        
+        # Helper to safely round values (handles None, inf, nan)
+        def safe_round(value, decimals=1):
+            if value is None:
+                return None
+            if isinstance(value, float):
+                if math.isinf(value) or math.isnan(value):
+                    return None
+            if isinstance(value, (int, float)):
+                return round(value, decimals)
+            return value
+        
         # Gate voltage (voltage divider)
         Vg = Vdd * (R2 / (R1 + R2))
         
-        # Solve for Id (MOSFET in saturation)
-        # Vgs = Vg - Vs = Vg - Id×Rs
-        # Id = K × (Vg - Id×Rs - Vth)²
-        a = K * Rs**2
-        b = -(2 * K * Rs * (Vg - Vth) + 1)
-        c = K * (Vg - Vth)**2
-        
-        Id = (-b - math.sqrt(b**2 - 4*a*c)) / (2*a)
-        Vs = Id * Rs
-        Vgs = Vg - Vs
-        Vds = Vdd - Vs
-        
-        # Gain (≈1)
-        gm = 2 * K * (Vgs - Vth)
-        gain = (gm * Rs) / (1 + gm * (Rs + Rsource))
-        
-        # Input/Output Impedance
-        Zin = (R1 * R2) / (R1 + R2)  # very high
-        Zout = 1 / gm  # low output impedance
-        
-        # Power
-        P_Q = Vds * Id
-        P_Rs = Vs * Id
-        
+        # Check if MOSFET would be in cutoff
+        if Vg <= Vth:
+            # MOSFET is OFF
+            Id = 0
+            Vs = 0
+            Vgs = Vg
+            Vds = Vdd
+            gm = 0
+            gain = 0
+            Zin = (R1 * R2) / (R1 + R2)
+            Zout = None
+            P_Q = 0
+            P_Rs = 0
+        else:
+            # Solve for Id (MOSFET in saturation)
+            a = K * Rs**2
+            b = -(2 * K * Rs * (Vg - Vth) + 1)
+            c = K * (Vg - Vth)**2
+            
+            discriminant = b**2 - 4*a*c
+            
+            if discriminant < 0:
+                Id = 0
+                Vs = 0
+                Vgs = Vg
+                Vds = Vdd
+                gm = 0
+                gain = 0
+                Zin = (R1 * R2) / (R1 + R2)
+                Zout = None
+                P_Q = 0
+                P_Rs = 0
+            else:
+                Id = (-b - math.sqrt(discriminant)) / (2*a)
+                if Id < 0:
+                    Id = 0
+                    Vs = 0
+                    Vgs = Vg
+                    Vds = Vdd
+                    gm = 0
+                    gain = 0
+                    Zin = (R1 * R2) / (R1 + R2)
+                    Zout = None
+                    P_Q = 0
+                    P_Rs = 0
+                else:
+                    Vs = Id * Rs
+                    Vgs = Vg - Vs
+                    Vds = Vdd - Vs
+                    
+                    # Gain (≈1)
+                    gm = 2 * K * (Vgs - Vth) if Vgs > Vth else 0
+                    if gm > 0:
+                        gain = (gm * Rs) / (1 + gm * (Rs + Rsource))
+                    else:
+                        gain = 0
+                    
+                    # Input/Output Impedance
+                    Zin = (R1 * R2) / (R1 + R2)
+                    Zout = 1 / gm if gm > 0 else None
+                    
+                    # Power
+                    P_Q = Vds * Id
+                    P_Rs = Vs * Id
+        if P_Q > 0.5:
+            warning = "⚠️ Power >500mW — needs heatsink!"
+        else:
+            warning = None
         return {
             "configuration": "Common Drain (Source Follower)",
             "voltages": {
-                "Vg": round(Vg, 2),
-                "Vs": round(Vs, 2),
-                "Vgs": round(Vgs, 2),
-                "Vds": round(Vds, 2)
+                "Vg": safe_round(Vg, 2),
+                "Vs": safe_round(Vs, 2),
+                "Vgs": safe_round(Vgs, 2),
+                "Vds": safe_round(Vds, 2)
             },
             "currents": {
-                "Id_mA": round(Id * 1000, 2)
+                "Id_mA": safe_round(Id * 1000, 2)
             },
             "gain": {
-                "gm_mS": round(gm * 1000, 2),
-                "voltage_gain": round(gain, 3)
+                "gm_mS": safe_round(gm * 1000, 2) if gm > 0 else 0,
+                "voltage_gain": safe_round(gain, 3)
             },
             "impedance": {
-                "Zin_kohm": round(Zin / 1000, 0),
-                "Zout_ohm": round(Zout, 1)
+                "Zin_kohm": safe_round(Zin / 1000, 0),
+                "Zout_ohm": safe_round(Zout, 1)
             },
             "power_mW": {
-                "transistor": round(P_Q * 1000, 1),
-                "Rs": round(P_Rs * 1000, 1)
+                "transistor": safe_round(P_Q * 1000, 1),
+                "Rs": safe_round(P_Rs * 1000, 1)
             },
+            "warning":warning if warning else None,
             "phase_shift": "0° (non-inverting)"
         }
-
+ 
 
     # ================================================================
     # MOSFET COMMON GATE (Source in, Drain out, Gate ground)
@@ -533,81 +607,124 @@ class ElectronicsCalculator:
                             Vth: float, K: float, RL: float = float('inf')):
         """
         Common Gate MOSFET Amplifier Calculator
-        
-        Args:
-            Vdd: Supply voltage (V)
-            Rd: Drain resistor (Ω)
-            Rs: Source resistor (Ω)
-            Vbias: Gate bias voltage (V) — externally set
-            Vth: Threshold voltage (V)
-            K: Transconductance parameter (A/V²)
-            RL: Load resistor (Ω), default = infinity
-        
-        Returns:
-            dict: All calculated values
         """
-        # Gate fixed, source follows
+        import math
+        
         Vg = Vbias
-        Vs = Vg - Vth - 0.5  # initial guess, but we solve properly
         
-        # Solve for Id in saturation
-        # Vgs = Vg - Vs
-        # Id = K × (Vgs - Vth)² = K × (Vg - Vs - Vth)²
-        # Also Vs = Id × Rs
-        # So Id = K × (Vg - Id×Rs - Vth)²
+        # Helper for safe rounding
+        def safe_round(value, decimals=0):
+            if value is None or value == float('inf') or value == float('-inf'):
+                return None
+            return round(value, decimals)
         
-        a = K * Rs**2
-        b = -(2 * K * Rs * (Vg - Vth) + 1)
-        c = K * (Vg - Vth)**2
-        
-        Id = (-b - math.sqrt(b**2 - 4*a*c)) / (2*a)
-        Vs = Id * Rs
-        Vgs = Vg - Vs
-        Vd = Vdd - (Id * Rd)
-        Vds = Vd - Vs
-        
-        # Gain
-        gm = 2 * K * (Vgs - Vth)
-        Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
-        gain = gm * Rd_eff  # positive gain (non-inverting)
-        
-        # Input/Output Impedance (very low input Z)
-        Zin = 1 / gm
-        Zout = Rd
-        
-        # Power
-        P_Q = Vds * Id
-        P_Rd = (Vdd - Vd) * Id
-        P_Rs = Vs * Id
+        # Check cutoff condition first
+        if Vg <= Vth:
+            # MOSFET is OFF
+            Id = 0
+            Vs = 0
+            Vgs = Vg
+            Vd = Vdd
+            Vds = Vdd
+            gm = 0
+            gain = 0
+            Zin = float('inf')
+            Zout = Rd
+            P_Q = 0
+            P_Rd = 0
+            P_Rs = 0
+        else:
+            # Solve for Id in saturation
+            a = K * Rs**2
+            b = -(2 * K * Rs * (Vg - Vth) + 1)
+            c = K * (Vg - Vth)**2
+            
+            discriminant = b**2 - 4*a*c
+            
+            if discriminant < 0:
+                Id = 0
+                Vs = 0
+                Vgs = Vg
+                Vd = Vdd
+                Vds = Vdd
+                gm = 0
+                gain = 0
+                Zin = float('inf')
+                Zout = Rd
+                P_Q = 0
+                P_Rd = 0
+                P_Rs = 0
+            else:
+                Id = (-b - math.sqrt(discriminant)) / (2*a)
+                
+                if Id < 0:
+                    Id = 0
+                    Vs = 0
+                    Vgs = Vg
+                    Vd = Vdd
+                    Vds = Vdd
+                    gm = 0
+                    gain = 0
+                    Zin = float('inf')
+                    Zout = Rd
+                    P_Q = 0
+                    P_Rd = 0
+                    P_Rs = 0
+                else:
+                    Vs = Id * Rs
+                    Vgs = Vg - Vs
+                    Vd = Vdd - (Id * Rd)
+                    Vds = Vd - Vs
+                    
+                    # Clamp Vd if it goes below Vs (saturation)
+                    if Vd < Vs:
+                        Vd = Vs + 0.05
+                        Id = (Vdd - Vd) / Rd
+                        Vs = Id * Rs
+                        Vgs = Vg - Vs
+                        Vds = Vd - Vs
+                    
+                    # Gain
+                    gm = 2 * K * (Vgs - Vth) if Vgs > Vth else 0
+                    Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
+                    gain = gm * Rd_eff if gm > 0 else 0
+                    
+                    # Input/Output Impedance
+                    Zin = 1 / gm if gm > 0 else float('inf')
+                    Zout = Rd
+                    
+                    # Power
+                    P_Q = Vds * Id
+                    P_Rd = (Vdd - Vd) * Id
+                    P_Rs = Vs * Id
         
         return {
             "configuration": "Common Gate (MOSFET)",
             "voltages": {
-                "Vg": round(Vg, 2),
-                "Vs": round(Vs, 2),
-                "Vd": round(Vd, 2),
-                "Vgs": round(Vgs, 2),
-                "Vds": round(Vds, 2)
+                "Vg": safe_round(Vg, 2),
+                "Vs": safe_round(Vs, 2),
+                "Vd": safe_round(Vd, 2),
+                "Vgs": safe_round(Vgs, 2),
+                "Vds": safe_round(Vds, 2)
             },
             "currents": {
-                "Id_mA": round(Id * 1000, 2)
+                "Id_mA": safe_round(Id * 1000, 2)
             },
             "gain": {
-                "gm_mS": round(gm * 1000, 2),
-                "voltage_gain": round(gain, 1)
+                "gm_mS": safe_round(gm * 1000, 2) if gm > 0 else 0,
+                "voltage_gain": safe_round(gain, 2)
             },
             "impedance": {
-                "Zin_ohm": round(Zin, 0),
-                "Zout_ohm": round(Zout, 0)
+                "Zin_ohm": safe_round(Zin, 0),  # ← FIXED: None instead of inf
+                "Zout_ohm": safe_round(Zout, 0)
             },
             "power_mW": {
-                "transistor": round(P_Q * 1000, 1),
-                "Rd": round(P_Rd * 1000, 1),
-                "Rs": round(P_Rs * 1000, 1)
+                "transistor": safe_round(P_Q * 1000, 1),
+                "Rd": safe_round(P_Rd * 1000, 1),
+                "Rs": safe_round(P_Rs * 1000, 1)
             },
             "phase_shift": "0° (non-inverting)"
         }
-        
     # ================================================================
     # UNIT CONVERSION (Resistance & Capacitance)
     # ================================================================

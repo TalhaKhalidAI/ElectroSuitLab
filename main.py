@@ -65,7 +65,7 @@ async def lifespan(app):
     yield
     logger.info("app end")
 
-app = FastAPI(title="Langchain API", version="0.0.1", lifespan=lifespan)
+app = FastAPI(title="Electro Suit Lab", version="1.0.0", lifespan=lifespan)
 
 # State and Exception Handlers
 app.state.limiter = limiter
