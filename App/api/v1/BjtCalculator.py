@@ -10,7 +10,7 @@ def get_calculator() -> ElectronicsCalculator:
     """Dependency for calculator instance."""
     return ElectronicsCalculator()
 
-bjt_route=APIRouter(prefix="/bjt_calculator",tags=["bjt-calculator"])
+bjt_route=APIRouter(prefix="/bjt_amps",tags=["bjt-calculator"])
 
 @bjt_route.post("/cmmon_emitter")
 async def common_emitttor_calculator(cm:CEM,ec:ElectronicsCalculator=Depends(get_calculator)):

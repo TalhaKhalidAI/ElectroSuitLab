@@ -6,7 +6,7 @@ from functools import lru_cache
 from enum import Enum
 from App.models.MosfetModels import CommonSourceModel,CommonDrainModel,CommonGateModel
 
-mosfet_router=APIRouter(prefix="/mosfet_calculator",tags=["Mosfet_Calculator"])
+mosfet_router=APIRouter(prefix="/mosfet_amps",tags=["Mosfet_Calculator"])
 @lru_cache(maxsize=1)
 def get_calculator() -> ElectronicsCalculator:
     """Dependency for calculator instance."""
@@ -26,7 +26,10 @@ async def common_source_calculator(
             Vth=cc.vth,
             K=cc.k,
             RL=cc._rl_ohm,
-            Rs=cc._rs_ohm      # ← FIXED: use converted value
+            Rs=cc._rs_ohm,
+            bypassed=cc.bypass,
+            cgd_pf=cc.cgd_pf,
+            freq_hz=cc.freq_hz
         )
         return result          # ← FIXED: return the result
     except Exception as e:

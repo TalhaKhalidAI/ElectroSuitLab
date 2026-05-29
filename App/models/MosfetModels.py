@@ -38,6 +38,10 @@ class CommonSourceModel(BaseModel):
     rl: Optional[float] = Field(None, gt=0, description="Load resistor (Ω)")
     rl_unit: ResistorUnit = Field(ResistorUnit.KOHM, description="Unit for RL")
     
+    bypass:Optional[bool]=True
+    cgd_pf:Optional[float]=None
+    freq_hz:Optional[float]=None
+
     # Private fields for converted values
     _rd_ohm: float = PrivateAttr(None)
     _r1_ohm: float = PrivateAttr(None)

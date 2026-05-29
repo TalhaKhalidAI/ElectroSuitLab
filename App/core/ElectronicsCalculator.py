@@ -488,98 +488,193 @@ class ElectronicsCalculator:
     # ================================================================
     # MOSFET COMMON SOURCE (Gate in, Drain out, Source ground)
     # ================================================================
-
     def common_source_mosfet(self, Vdd: float, Rd: float, R1: float, R2: float, 
                             Vth: float, K: float, RL: float = float('inf'), 
-                            Rs: float = 0):
+                            Rs: float = 0, bypassed: bool = True,
+                            cgd_pf: float = None, freq_hz: float = None):
         """
         Common Source MOSFET Amplifier Calculator
+        
+        Args:
+            Vdd: Supply voltage (V)
+            Rd: Drain resistor (Ω)
+            R1: Gate bias resistor to Vdd (Ω)
+            R2: Gate bias resistor to GND (Ω)
+            Vth: Threshold voltage (V)
+            K: Transconductance parameter (A/V²)
+            RL: Load resistor (Ω), default = infinity (no load)
+            Rs: Source resistor (Ω), default = 0
+            bypassed: If True, Rs is bypassed (high gain), else unbypassed (low gain)
+            cgd_pf: Gate-Drain capacitance in pF (for Miller effect)
+            freq_hz: Operating frequency in Hz (for Miller reactance)
+        
+        Returns:
+            dict: All calculated values including Miller effect if enabled
         """
-        # Gate voltage (voltage divider — no gate current!)
-        Vg = Vdd * (R2 / (R1 + R2))
+        import math
+        
+        # ============================================================
+        # DC BIAS CALCULATIONS
+        # ============================================================
+        Vg = Vdd * (R2 / (R1 + R2)) if (R1 + R2) > 0 else 0
+        
+        # Default values
+        Id = 0
+        Vs = 0
+        Vgs = Vg
+        Vd = Vdd
+        Vds = Vdd
+        Vov = 0
+        region = "cutoff"
+        gm = 0
+        gain = 0
+        Zin = (R1 * R2) / (R1 + R2) if (R1 + R2) > 0 else 0
+        Zout = Rd
+        P_Q = 0
+        P_Rd = 0
+        P_Rs = 0
+        gain_description = ""
+        miller = None
         
         # Check cutoff condition first
-        if Vg <= Vth:
-            # MOSFET is OFF
-            Id = 0
-            Vs = 0
-            Vgs = Vg
-            Vd = Vdd
-            Vds = Vdd
-            Vov = 0
-            region = "cutoff"
-            gm = 0
-            gain = 0
-            Zin = (R1 * R2) / (R1 + R2)
-            Zout = Rd
-            P_Q = 0
-            P_Rd = 0
-            P_Rs = 0
-        else:
+        if Vg > Vth:
+            # MOSFET is ON - solve for operating point
             if Rs == 0:
+                # Source grounded - simple quadratic
                 Vgs = Vg
                 Id = K * (Vgs - Vth)**2 if Vgs > Vth else 0
                 Vs = 0
+                Vd = Vdd - (Id * Rd)
+                Vds = Vd - Vs
             else:
+                # With source resistor - solve quadratic
                 a = K * Rs**2
                 b = -(2 * K * Rs * (Vg - Vth) + 1)
                 c = K * (Vg - Vth)**2
                 discriminant = b**2 - 4*a*c
-                if discriminant < 0:
-                    Id = 0
-                    Vs = 0
-                    Vgs = Vg
-                else:
+                
+                if discriminant >= 0:
                     Id = (-b - math.sqrt(discriminant)) / (2*a)
                     if Id < 0:
                         Id = 0
                         Vs = 0
                         Vgs = Vg
+                        Vd = Vdd
                     else:
                         Vs = Id * Rs
                         Vgs = Vg - Vs
+                        Vd = Vdd - (Id * Rd)
+                        Vds = Vd - Vs
+                else:
+                    Id = 0
+                    Vs = 0
+                    Vgs = Vg
+                    Vd = Vdd
+                    Vds = Vdd
             
-            Vd_calc = Vdd - (Id * Rd)
-            
-            # *** SATURATION CLAMP (FIXED) ***
-            # Only clamp Vd, DO NOT recalculate Id
-            if Vd_calc < 0.2:
-                Vd = 0.2
-                # Id remains from MOSFET equation
+            # ============================================================
+            # SATURATION CLAMP (ensures Vds >= 0.2V)
+            # ============================================================
+            if Vds < 0.2:
+                Vds = 0.2
+                Vd = Vs + Vds
+                # Clamp Vd to Vdd
+                if Vd > Vdd:
+                    Vd = Vdd
+                    Vds = Vd - Vs
+                Id = (Vdd - Vd) / Rd if Rd > 0 else 0
                 if Rs > 0:
-                    # Vs stays the same (Id unchanged)
                     Vs = Id * Rs
                     Vgs = Vg - Vs
+                    Vds = Vd - Vs
                 else:
                     Vs = 0
                     Vgs = Vg
-                Vds = Vd - Vs
-            else:
-                Vd = Vd_calc
-                Vds = Vd - Vs
+            
+            # Ensure no negative values
+            if Vds < 0:
+                Vds = 0.05
+                Vd = Vs + Vds
             
             Vov = Vgs - Vth if Vgs > Vth else 0
             
-            # Check if in saturation (active) region
-            # For MOSFET: Vds >= Vgs - Vth
-            if Vds >= Vov and Vov > 0:
+            # Determine region
+            if Vgs <= Vth:
+                region = "cutoff"
+            elif Vds >= Vov and Vov > 0:
                 region = "saturation (active) — good for amplification"
             else:
                 region = "triode (linear) — not ideal for amplification"
             
+            # ============================================================
+            # GAIN CALCULATION
+            # ============================================================
             gm = 2 * K * Vov if Vov > 0 else 0
             Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
-            gain = -gm * Rd_eff if gm > 0 else 0
             
-            Zin = (R1 * R2) / (R1 + R2)
-            Zout = Rd
+            if bypassed or Rs == 0:
+                gain = -gm * Rd_eff if gm > 0 else 0
+                gain_description = "High gain (source bypassed or grounded)"
+            else:
+                gain = -Rd_eff / (Rs + (1/gm)) if (Rs + (1/gm)) > 0 and gm > 0 else 0
+                gain_description = "Low gain (source unbypassed)"
             
+            # ============================================================
+            # MILLER EFFECT (OPTIONAL)
+            # ============================================================
+            if cgd_pf is not None and cgd_pf > 0 and abs(gain) > 0.1:
+                gain_magnitude = abs(gain)
+                cm_pf = cgd_pf * (1 + gain_magnitude)
+                
+                miller = {
+                    "cgd_pf": cgd_pf,
+                    "gain_magnitude": round(gain_magnitude, 1),
+                    "miller_capacitance_pf": round(cm_pf, 1),
+                    "formula": f"Cm = Cgd × (1+Av) = {cgd_pf}pF × (1+{gain_magnitude:.0f}) = {round(cm_pf,1)}pF"
+                }
+                
+                if freq_hz is not None and freq_hz > 0:
+                    xc_miller = 1 / (2 * math.pi * freq_hz * (cm_pf * 1e-12))
+                    miller["at_frequency"] = {
+                        "hz": freq_hz,
+                        "khz": round(freq_hz / 1000, 2),
+                        "mhz": round(freq_hz / 1e6, 4),
+                        "miller_reactance_ohm": round(xc_miller, 0),
+                        "miller_reactance_kohm": round(xc_miller / 1000, 1)
+                    }
+                    
+                    if Zin > 0:
+                        cgs_pf = 50 if cgd_pf < 50 else 100
+                        c_input_total_pf = cm_pf + cgs_pf
+                        f_cutoff_hz = 1 / (2 * math.pi * Zin * (c_input_total_pf * 1e-12))
+                        
+                        miller["bandwidth"] = {
+                            "cgs_pf": cgs_pf,
+                            "c_input_total_pf": round(c_input_total_pf, 1),
+                            "source_impedance_ohm": round(Zin, 0),
+                            "cutoff_frequency_hz": round(f_cutoff_hz, 0),
+                            "cutoff_frequency_khz": round(f_cutoff_hz / 1000, 1),
+                            "warning": f"Amplifier gain drops above {round(f_cutoff_hz/1000,1)}kHz due to Miller effect"
+                        }
+                        
+                        if freq_hz > f_cutoff_hz:
+                            miller["bandwidth"]["issue"] = f"⚠️ Operating frequency ({round(freq_hz/1000,0)}kHz) exceeds bandwidth!"
+                        else:
+                            miller["bandwidth"]["issue"] = f"✅ Bandwidth sufficient for {round(freq_hz/1000,0)}kHz operation"
+                else:
+                    miller["note"] = "Frequency not provided. Miller reactance and bandwidth not calculated."
+            
+            # Power calculations
             P_Q = Vds * Id
             P_Rd = (Vdd - Vd) * Id
             P_Rs = Vs * Id if Rs > 0 else 0
         
+        # ============================================================
+        # RETURN RESULTS
+        # ============================================================
         return {
             "configuration": "Common Source (MOSFET)",
+            "bypass_state": gain_description if Vg > Vth else "MOSFET is OFF",
             "voltages": {
                 "Vg": round(Vg, 2),
                 "Vs": round(Vs, 2),
@@ -593,10 +688,11 @@ class ElectronicsCalculator:
             },
             "gain": {
                 "gm_mS": round(gm * 1000, 2),
-                "voltage_gain": round(gain, 1)
+                "voltage_gain": round(gain, 1),
+                "description": gain_description if Vg > Vth else "No gain (MOSFET off)"
             },
             "impedance": {
-                "Zin_kohm": round(Zin / 1000, 0),
+                "Zin_ohm": round(Zin, 0),  
                 "Zout_ohm": round(Zout, 0)
             },
             "power_mW": {
@@ -605,8 +701,127 @@ class ElectronicsCalculator:
                 "Rs": round(P_Rs * 1000, 1)
             },
             "region": region,
-            "phase_shift": "180° (inverted)"
+            "phase_shift": "180° (inverted)",
+            "miller": miller
         }
+    # def common_source_mosfet(self, Vdd: float, Rd: float, R1: float, R2: float, 
+    #                         Vth: float, K: float, RL: float = float('inf'), 
+    #                         Rs: float = 0):
+    #     """
+    #     Common Source MOSFET Amplifier Calculator
+    #     """
+    #     # Gate voltage (voltage divider — no gate current!)
+    #     Vg = Vdd * (R2 / (R1 + R2))
+        
+    #     # Check cutoff condition first
+    #     if Vg <= Vth:
+    #         # MOSFET is OFF
+    #         Id = 0
+    #         Vs = 0
+    #         Vgs = Vg
+    #         Vd = Vdd
+    #         Vds = Vdd
+    #         Vov = 0
+    #         region = "cutoff"
+    #         gm = 0
+    #         gain = 0
+    #         Zin = (R1 * R2) / (R1 + R2)
+    #         Zout = Rd
+    #         P_Q = 0
+    #         P_Rd = 0
+    #         P_Rs = 0
+    #     else:
+    #         if Rs == 0:
+    #             Vgs = Vg
+    #             Id = K * (Vgs - Vth)**2 if Vgs > Vth else 0
+    #             Vs = 0
+    #         else:
+    #             a = K * Rs**2
+    #             b = -(2 * K * Rs * (Vg - Vth) + 1)
+    #             c = K * (Vg - Vth)**2
+    #             discriminant = b**2 - 4*a*c
+    #             if discriminant < 0:
+    #                 Id = 0
+    #                 Vs = 0
+    #                 Vgs = Vg
+    #             else:
+    #                 Id = (-b - math.sqrt(discriminant)) / (2*a)
+    #                 if Id < 0:
+    #                     Id = 0
+    #                     Vs = 0
+    #                     Vgs = Vg
+    #                 else:
+    #                     Vs = Id * Rs
+    #                     Vgs = Vg - Vs
+            
+    #         Vd_calc = Vdd - (Id * Rd)
+            
+    #         # *** SATURATION CLAMP (FIXED) ***
+    #         # Only clamp Vd, DO NOT recalculate Id
+    #         if Vd_calc < 0.2:
+    #             Vd = 0.2
+    #             # Id remains from MOSFET equation
+    #             if Rs > 0:
+    #                 # Vs stays the same (Id unchanged)
+    #                 Vs = Id * Rs
+    #                 Vgs = Vg - Vs
+    #             else:
+    #                 Vs = 0
+    #                 Vgs = Vg
+    #             Vds = Vd - Vs
+    #         else:
+    #             Vd = Vd_calc
+    #             Vds = Vd - Vs
+            
+    #         Vov = Vgs - Vth if Vgs > Vth else 0
+            
+    #         # Check if in saturation (active) region
+    #         # For MOSFET: Vds >= Vgs - Vth
+    #         if Vds >= Vov and Vov > 0:
+    #             region = "saturation (active) — good for amplification"
+    #         else:
+    #             region = "triode (linear) — not ideal for amplification"
+            
+    #         gm = 2 * K * Vov if Vov > 0 else 0
+    #         Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
+    #         gain = -gm * Rd_eff if gm > 0 else 0
+            
+    #         Zin = (R1 * R2) / (R1 + R2)
+    #         Zout = Rd
+            
+    #         P_Q = Vds * Id
+    #         P_Rd = (Vdd - Vd) * Id
+    #         P_Rs = Vs * Id if Rs > 0 else 0
+        
+    #     return {
+    #         "configuration": "Common Source (MOSFET)",
+    #         "voltages": {
+    #             "Vg": round(Vg, 2),
+    #             "Vs": round(Vs, 2),
+    #             "Vd": round(Vd, 2),
+    #             "Vgs": round(Vgs, 2),
+    #             "Vds": round(Vds, 2),
+    #             "Vov": round(Vov, 2)
+    #         },
+    #         "currents": {
+    #             "Id_mA": round(Id * 1000, 2)
+    #         },
+    #         "gain": {
+    #             "gm_mS": round(gm * 1000, 2),
+    #             "voltage_gain": round(gain, 1)
+    #         },
+    #         "impedance": {
+    #             "Zin_kohm": round(Zin / 1000, 0),
+    #             "Zout_ohm": round(Zout, 0)
+    #         },
+    #         "power_mW": {
+    #             "transistor": round(P_Q * 1000, 1),
+    #             "Rd": round(P_Rd * 1000, 1),
+    #             "Rs": round(P_Rs * 1000, 1)
+    #         },
+    #         "region": region,
+    #         "phase_shift": "180° (inverted)"
+    #     }
     # ================================================================
     # MOSFET COMMON DRAIN (Source Follower) — Gate in, Source out
     # ================================================================
