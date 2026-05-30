@@ -1,5 +1,5 @@
 import math
-
+from enum import Enum
 class ElectronicsCalculator:
     """Complete BJT calculator for Common Emitter, Common Base, and Common Collector configurations"""
     
@@ -36,6 +36,65 @@ class ElectronicsCalculator:
         else:
             raise ValueError(f"Unknown unit: {unit}")
     
+    class ResistorUnit(str, Enum):
+        OHM = "ohm"
+        KOHM = "kohm"
+        MOHM = "mohm"
+
+# ================================================================
+# SIMPLE INDUCTANCE CONVERTER
+# ================================================================
+
+    def inductance_convertor(self, value: float, from_unit: str, to_unit: str = "H"):
+        """
+        Simple inductance converter.
+        
+        Args:
+            value: Inductance value
+            from_unit: 'H', 'mH', 'uH', 'nH', 'pH'
+            to_unit: 'H', 'mH', 'uH', 'nH', 'pH' (default 'H')
+        
+        Returns:
+            float: Converted value
+        
+        Examples:
+            ec.inductance_convertor(100, "mH", "H")   # Returns 0.1
+            ec.inductance_convertor(10, "uH", "nH")   # Returns 10000
+            ec.inductance_convertor(1, "H", "mH")     # Returns 1000
+        """
+        # Convert to Henry first
+        from_unit = from_unit.lower()
+        if from_unit == 'h':
+            henry = value
+        elif from_unit == 'mh':
+            henry = value / 1000
+        elif from_unit == 'uh':
+            henry = value / 1_000_000
+        elif from_unit == 'nh':
+            henry = value / 1_000_000_000
+        elif from_unit == 'ph':
+            henry = value / 1_000_000_000_000
+        else:
+            raise ValueError(f"Unknown unit: {from_unit}. Use H, mH, uH, nH, pH")
+        
+        # Convert from Henry to target unit
+        to_unit = to_unit.lower()
+        if to_unit == 'h':
+            result = henry
+        elif to_unit == 'mh':
+            result = henry * 1000
+        elif to_unit == 'uh':
+            result = henry * 1_000_000
+        elif to_unit == 'nh':
+            result = henry * 1_000_000_000
+        elif to_unit == 'ph':
+            result = henry * 1_000_000_000_000
+        else:
+            raise ValueError(f"Unknown unit: {to_unit}. Use H, mH, uH, nH, pH")
+        
+        # Round to 10 decimal places to clean up floating point
+        return round(result, 10)
+
     @staticmethod
     def _check_saturation(Vc, Ve, Vcc):
         """
@@ -465,26 +524,103 @@ class ElectronicsCalculator:
     # ================================================================
     # OHM'S LAW & KIRCHHOFF HELPERS
     # ================================================================
+    # def ohms_law(self, voltage=None, current=None, resistance=None):
+    #     """Calculate missing value using Ohm's Law: V = I × R"""
+        
+    #     provided = sum([voltage is not None, current is not None, resistance is not None])
+        
+    #     if provided != 2:
+    #         raise ValueError(f"Need exactly two values. Got {provided}")
+        
+    #     # Case 1: Calculate Resistance (V and I given)
+    #     if voltage is not None and current is not None:
+    #         if voltage == 0 and current == 0:
+    #             return {"resistance": 0}  # 0/0 is undefined, but return 0
+    #         if current == 0:
+    #             raise ValueError("Current cannot be zero when calculating resistance (division by zero)")
+    #         return {"resistance": round(voltage / current, 2)}
+        
+    #     # Case 2: Calculate Current (V and R given)
+    #     elif voltage is not None and resistance is not None:
+    #         if voltage == 0 and resistance == 0:
+    #             return {"current": 0}  # 0/0 is undefined, but return 0
+    #         if resistance == 0:
+    #             raise ValueError("Resistance cannot be zero when calculating current (division by zero)")
+    #         return {"current": round(voltage / resistance, 6)}
+        
+    #     # Case 3: Calculate Voltage (I and R given) - No division, always safe
+    #     elif current is not None and resistance is not None:
+    #         return {"voltage": round(current * resistance, 2)}
+        
+    #     else:
+    #         raise ValueError("Invalid combination")
+
     def ohms_law(self, voltage=None, current=None, resistance=None):
-        """Calculate missing value using Ohm's Law: V = I × R"""
+        """Calculate missing value using Ohm's Law: V = I × R
+        
+        Returns:
+            dict: Calculated value with auto-formatted units
+        """
+        
+        provided = sum([voltage is not None, current is not None, resistance is not None])
+        
+        if provided != 2:
+            raise ValueError(f"Need exactly two values. Got {provided}")
+        
+        # Case 1: Calculate Resistance (V and I given)
         if voltage is not None and current is not None:
-            return {"resistance": round(voltage / current, 2)}
+            if voltage == 0 and current == 0:
+                return {"resistance": 0, "unit": "Ω"}
+            if current == 0:
+                raise ValueError("Current cannot be zero when calculating resistance (division by zero)")
+            
+            resistance_value = voltage / current
+            
+            # Auto-format resistance
+            if resistance_value >= 1_000_000:
+                return {"resistance": round(resistance_value / 1_000_000, 2), "unit": "MΩ"}
+            elif resistance_value >= 1000:
+                return {"resistance": round(resistance_value / 1000, 2), "unit": "kΩ"}
+            else:
+                return {"resistance": round(resistance_value, 2), "unit": "Ω"}
+        
+        # Case 2: Calculate Current (V and R given)
         elif voltage is not None and resistance is not None:
-            return {"current": round(voltage / resistance, 6)}
+            if voltage == 0 and resistance == 0:
+                return {"current": 0, "unit": "A"}
+            if resistance == 0:
+                raise ValueError("Resistance cannot be zero when calculating current (division by zero)")
+            
+            current_value = voltage / resistance
+            
+            # Auto-format current
+            if current_value >= 1:
+                return {"current": round(current_value, 4), "unit": "A"}
+            elif current_value >= 1e-3:
+                return {"current": round(current_value * 1000, 2), "unit": "mA"}
+            elif current_value >= 1e-6:
+                return {"current": round(current_value * 1_000_000, 2), "unit": "µA"}
+            elif current_value >= 1e-9:
+                return {"current": round(current_value * 1_000_000_000, 2), "unit": "nA"}
+            else:
+                return {"current": round(current_value * 1_000_000_000_000, 2), "unit": "pA"}
+        
+        # Case 3: Calculate Voltage (I and R given) - No division, always safe
         elif current is not None and resistance is not None:
-            return {"voltage": round(current * resistance, 2)}
+            voltage_value = current * resistance
+            
+            # Auto-format voltage
+            if voltage_value >= 1000:
+                return {"voltage": round(voltage_value / 1000, 2), "unit": "kV"}
+            elif voltage_value >= 1:
+                return {"voltage": round(voltage_value, 2), "unit": "V"}
+            elif voltage_value >= 1e-3:
+                return {"voltage": round(voltage_value * 1000, 2), "unit": "mV"}
+            else:
+                return {"voltage": round(voltage_value * 1_000_000, 2), "unit": "µV"}
+        
         else:
-            raise ValueError("Need at least two of: voltage, current, resistance")
-    
-    def voltage_divider(self, Vcc, R1, R2):
-        """Calculate output voltage of a voltage divider"""
-        Vout = Vcc * (R2 / (R1 + R2))
-        return {"Vout": round(Vout, 2)}
-    
-    def rc_cutoff(self, R, C):
-        """Calculate RC low-pass/high-pass cutoff frequency"""
-        f = 1 / (2 * math.pi * R * C)
-        return {"cutoff_freq_hz": round(f, 2)}
+            raise ValueError("Invalid combination")
     # ================================================================
     # MOSFET COMMON SOURCE (Gate in, Drain out, Source ground)
     # ================================================================
@@ -704,127 +840,7 @@ class ElectronicsCalculator:
             "phase_shift": "180° (inverted)",
             "miller": miller
         }
-    # def common_source_mosfet(self, Vdd: float, Rd: float, R1: float, R2: float, 
-    #                         Vth: float, K: float, RL: float = float('inf'), 
-    #                         Rs: float = 0):
-    #     """
-    #     Common Source MOSFET Amplifier Calculator
-    #     """
-    #     # Gate voltage (voltage divider — no gate current!)
-    #     Vg = Vdd * (R2 / (R1 + R2))
-        
-    #     # Check cutoff condition first
-    #     if Vg <= Vth:
-    #         # MOSFET is OFF
-    #         Id = 0
-    #         Vs = 0
-    #         Vgs = Vg
-    #         Vd = Vdd
-    #         Vds = Vdd
-    #         Vov = 0
-    #         region = "cutoff"
-    #         gm = 0
-    #         gain = 0
-    #         Zin = (R1 * R2) / (R1 + R2)
-    #         Zout = Rd
-    #         P_Q = 0
-    #         P_Rd = 0
-    #         P_Rs = 0
-    #     else:
-    #         if Rs == 0:
-    #             Vgs = Vg
-    #             Id = K * (Vgs - Vth)**2 if Vgs > Vth else 0
-    #             Vs = 0
-    #         else:
-    #             a = K * Rs**2
-    #             b = -(2 * K * Rs * (Vg - Vth) + 1)
-    #             c = K * (Vg - Vth)**2
-    #             discriminant = b**2 - 4*a*c
-    #             if discriminant < 0:
-    #                 Id = 0
-    #                 Vs = 0
-    #                 Vgs = Vg
-    #             else:
-    #                 Id = (-b - math.sqrt(discriminant)) / (2*a)
-    #                 if Id < 0:
-    #                     Id = 0
-    #                     Vs = 0
-    #                     Vgs = Vg
-    #                 else:
-    #                     Vs = Id * Rs
-    #                     Vgs = Vg - Vs
-            
-    #         Vd_calc = Vdd - (Id * Rd)
-            
-    #         # *** SATURATION CLAMP (FIXED) ***
-    #         # Only clamp Vd, DO NOT recalculate Id
-    #         if Vd_calc < 0.2:
-    #             Vd = 0.2
-    #             # Id remains from MOSFET equation
-    #             if Rs > 0:
-    #                 # Vs stays the same (Id unchanged)
-    #                 Vs = Id * Rs
-    #                 Vgs = Vg - Vs
-    #             else:
-    #                 Vs = 0
-    #                 Vgs = Vg
-    #             Vds = Vd - Vs
-    #         else:
-    #             Vd = Vd_calc
-    #             Vds = Vd - Vs
-            
-    #         Vov = Vgs - Vth if Vgs > Vth else 0
-            
-    #         # Check if in saturation (active) region
-    #         # For MOSFET: Vds >= Vgs - Vth
-    #         if Vds >= Vov and Vov > 0:
-    #             region = "saturation (active) — good for amplification"
-    #         else:
-    #             region = "triode (linear) — not ideal for amplification"
-            
-    #         gm = 2 * K * Vov if Vov > 0 else 0
-    #         Rd_eff = Rd if RL == float('inf') else (Rd * RL) / (Rd + RL)
-    #         gain = -gm * Rd_eff if gm > 0 else 0
-            
-    #         Zin = (R1 * R2) / (R1 + R2)
-    #         Zout = Rd
-            
-    #         P_Q = Vds * Id
-    #         P_Rd = (Vdd - Vd) * Id
-    #         P_Rs = Vs * Id if Rs > 0 else 0
-        
-    #     return {
-    #         "configuration": "Common Source (MOSFET)",
-    #         "voltages": {
-    #             "Vg": round(Vg, 2),
-    #             "Vs": round(Vs, 2),
-    #             "Vd": round(Vd, 2),
-    #             "Vgs": round(Vgs, 2),
-    #             "Vds": round(Vds, 2),
-    #             "Vov": round(Vov, 2)
-    #         },
-    #         "currents": {
-    #             "Id_mA": round(Id * 1000, 2)
-    #         },
-    #         "gain": {
-    #             "gm_mS": round(gm * 1000, 2),
-    #             "voltage_gain": round(gain, 1)
-    #         },
-    #         "impedance": {
-    #             "Zin_kohm": round(Zin / 1000, 0),
-    #             "Zout_ohm": round(Zout, 0)
-    #         },
-    #         "power_mW": {
-    #             "transistor": round(P_Q * 1000, 1),
-    #             "Rd": round(P_Rd * 1000, 1),
-    #             "Rs": round(P_Rs * 1000, 1)
-    #         },
-    #         "region": region,
-    #         "phase_shift": "180° (inverted)"
-    #     }
-    # ================================================================
-    # MOSFET COMMON DRAIN (Source Follower) — Gate in, Source out
-    # ================================================================
+ 
 
     def common_drain_mosfet(self, Vdd: float, R1: float, R2: float, Rs: float,
                             Vth: float, K: float, Rsource: float = 0):
@@ -1072,6 +1088,572 @@ class ElectronicsCalculator:
     # UNIT CONVERSION (Resistance & Capacitance)
     # ================================================================
 
+    def coupling_capacitor(self, frequency_hz: float, impedance_ohm: float, 
+                            cutoff_ratio: float = 0.1):
+        """Calculate coupling capacitor value"""
+        import math
+        
+        f_cutoff = frequency_hz * cutoff_ratio
+        C_farads = 1 / (2 * math.pi * f_cutoff * impedance_ohm)
+        
+        # Auto-format capacitance
+        cap_value, cap_unit = self.format_capacitance(C_farads)
+        
+        # Expanded standard capacitor values (in µF)
+        std_caps_uf = [
+            # Small values (pF to nF range)
+            0.001, 0.0022, 0.0047, 0.01, 0.022, 0.047, 0.1, 0.22, 0.47,
+            # Medium values (nF to µF range)
+            1, 2.2, 4.7, 10, 22, 33, 47, 68, 100, 150, 220, 330, 470, 680,
+            # Large values (µF to mF range)
+            1000, 1500, 2200, 3300, 4700, 6800, 10000, 15000, 22000, 33000, 47000, 68000,
+            100000, 150000, 220000, 330000, 470000, 680000, 1000000
+        ]
+        
+        C_uf = C_farads * 1e6
+        
+        # Find the NEXT HIGHER standard value (not just closest)
+        recommended_uf = None
+        for cap in std_caps_uf:
+            if cap >= C_uf:
+                recommended_uf = cap
+                break
+        
+        # If no larger cap found, use the largest available
+        if recommended_uf is None:
+            recommended_uf = std_caps_uf[-1]
+        
+        recommended_farads = recommended_uf / 1e6
+        rec_value, rec_unit = self.format_capacitance(recommended_farads)
+        
+        return {
+            "input": {
+                "signal_frequency_hz": frequency_hz,
+                "impedance_ohm": impedance_ohm,
+                "cutoff_ratio": cutoff_ratio,
+                "cutoff_frequency_hz": round(f_cutoff, 2)
+            },
+            "calculated_capacitance": {
+                "value": cap_value,
+                "unit": cap_unit,
+                "farads": round(C_farads, 10),
+                "microfarads": round(C_uf, 2)
+            },
+            "recommended": {
+                "value": rec_value,
+                "unit": rec_unit,
+                "microfarads": recommended_uf
+            },
+            "formula": f"C = 1/(2π × {round(f_cutoff,2)} × {impedance_ohm}) = {cap_value} {cap_unit}",
+            "rule_of_thumb": f"For {frequency_hz}Hz signal with {impedance_ohm}Ω impedance, use {recommended_uf}µF coupling cap",
+            "warning": f"Very large capacitor ({recommended_uf}µF) needed. Consider increasing impedance or frequency." if recommended_uf > 10000 else None
+        }
+    # ================================================================
+    # IMPEDANCE CALCULATOR
+    # ================================================================
+
+    def resistor_impedance(self, resistance_ohm: float):
+        """
+        Resistor impedance (constant across frequency).
+        
+        Args:
+            resistance_ohm: Resistance in Ohms
+        
+        Returns:
+            dict: Impedance value (same as resistance)
+        """
+        return {
+            "component": "Resistor",
+            "resistance_ohm": resistance_ohm,
+            "impedance_ohm": resistance_ohm,
+            "note": "Resistor impedance is constant regardless of frequency"
+        }
+
+
+    def capacitor_impedance(self, capacitance_f: float, frequency_hz: float):
+        """
+        Capacitor impedance (capacitive reactance).
+        
+        Formula: Xc = 1 / (2π × f × C)
+        
+        Args:
+            capacitance_f: Capacitance in Farads
+            frequency_hz: Frequency in Hz
+        
+        Returns:
+            dict: Capacitive reactance with auto-formatted units
+        """
+        import math
+        
+        if frequency_hz <= 0:
+            return {"error": "Frequency must be greater than 0"}
+        
+        if capacitance_f <= 0:
+            return {"error": "Capacitance must be greater than 0"}
+        
+        Xc = 1 / (2 * math.pi * frequency_hz * capacitance_f)
+        
+        # Format capacitance
+        cap_value, cap_unit = self.format_capacitance(capacitance_f)
+        
+        # ============================================================
+        # AUTO-FORMAT FREQUENCY
+        # ============================================================
+        if frequency_hz >= 1_000_000_000:
+            freq_value = frequency_hz / 1_000_000_000
+            freq_unit = "GHz"
+        elif frequency_hz >= 1_000_000:
+            freq_value = frequency_hz / 1_000_000
+            freq_unit = "MHz"
+        elif frequency_hz >= 1000:
+            freq_value = frequency_hz / 1000
+            freq_unit = "kHz"
+        else:
+            freq_value = frequency_hz
+            freq_unit = "Hz"
+        
+        # ============================================================
+        # AUTO-FORMAT IMPEDANCE (Xc)
+        # ============================================================
+        if Xc >= 1_000_000:
+            imp_value = Xc / 1_000_000
+            imp_unit = "MΩ"
+        elif Xc >= 1000:
+            imp_value = Xc / 1000
+            imp_unit = "kΩ"
+        else:
+            imp_value = Xc
+            imp_unit = "Ω"
+        
+        # ============================================================
+        # AUTO-FORMAT IMPEDANCE for kHz display
+        # ============================================================
+        Xc_khz = Xc / 1000
+        if Xc_khz >= 1000:
+            imp_khz_value = Xc_khz / 1000
+            imp_khz_unit = "MΩ"
+        elif Xc_khz >= 1:
+            imp_khz_value = Xc_khz
+            imp_khz_unit = "kΩ"
+        else:
+            imp_khz_value = Xc
+            imp_khz_unit = "Ω"
+        
+        return {
+            "component": "Capacitor",
+            "capacitance": {
+                "value": cap_value,
+                "unit": cap_unit,
+                "farads": capacitance_f
+            },
+            "frequency": {
+                "value": round(freq_value, 4) if freq_value < 1000 else round(freq_value, 2),
+                "unit": freq_unit,
+                "hz": frequency_hz
+            },
+            "impedance": {
+                "value": round(imp_value, 2),
+                "unit": imp_unit,
+                "ohms": round(Xc, 2)
+            },
+            "formula": f"Xc = 1/(2π × {round(freq_value,2)} {freq_unit} × {cap_value}{cap_unit}) = {round(imp_value,2)} {imp_unit}",
+            "rule_of_thumb": f"At {round(freq_value,2)} {freq_unit}, capacitor acts like a {round(imp_value,2)} {imp_unit} resistor"
+        }
+
+    def inductor_impedance(self, inductance_h: float, frequency_hz: float):
+        """
+        Inductor impedance (inductive reactance).
+        
+        Formula: XL = 2π × f × L
+        
+        Args:
+            inductance_h: Inductance in Henries
+            frequency_hz: Frequency in Hz
+        
+        Returns:
+            dict: Inductive reactance with auto-formatted units
+        """
+        import math
+        
+        if frequency_hz <= 0:
+            return {"error": "Frequency must be greater than 0"}
+        
+        if inductance_h <= 0:
+            return {"error": "Inductance must be greater than 0"}
+        
+        XL = 2 * math.pi * frequency_hz * inductance_h
+        
+        # Format for display
+        L_value, L_unit = self.format_inductance(inductance_h)
+        
+        # Intelligent rounding for impedance
+        if XL < 0.001:
+            XL_rounded = round(XL, 6)  # 6 decimal places for very small
+        elif XL < 0.01:
+            XL_rounded = round(XL, 5)
+        elif XL < 0.1:
+            XL_rounded = round(XL, 4)
+        elif XL < 1:
+            XL_rounded = round(XL, 3)
+        else:
+            XL_rounded = round(XL, 2)
+        
+        # Auto-format frequency
+        freq_hz = frequency_hz
+        if freq_hz >= 1_000_000_000:
+            freq_value = freq_hz / 1_000_000_000
+            freq_unit = "GHz"
+        elif freq_hz >= 1_000_000:
+            freq_value = freq_hz / 1_000_000
+            freq_unit = "MHz"
+        elif freq_hz >= 1000:
+            freq_value = freq_hz / 1000
+            freq_unit = "kHz"
+        else:
+            freq_value = freq_hz
+            freq_unit = "Hz"
+        
+        # Auto-format impedance
+        if XL >= 1_000_000:
+            imp_value = XL / 1_000_000
+            imp_unit = "MΩ"
+        elif XL >= 1000:
+            imp_value = XL / 1000
+            imp_unit = "kΩ"
+        elif XL >= 1:
+            imp_value = XL
+            imp_unit = "Ω"
+        elif XL >= 0.001:
+            imp_value = XL * 1000
+            imp_unit = "mΩ"
+        else:
+            imp_value = XL * 1_000_000
+            imp_unit = "µΩ"
+        
+        return {
+            "component": "Inductor",
+            "inductance": {
+                "value": L_value,
+                "unit": L_unit,
+                "henries": inductance_h
+            },
+            "frequency": {
+                "value": round(freq_value, 4) if freq_value < 1000 else round(freq_value, 2),
+                "unit": freq_unit,
+                "hz": frequency_hz
+            },
+            "impedance": {
+                "value": round(imp_value, 2),
+                "unit": imp_unit,
+                "ohms": XL_rounded
+            },
+            "formula": f"XL = 2π × {round(freq_value,2)} {freq_unit} × {L_value}{L_unit} = {round(imp_value,2)} {imp_unit}",
+            "rule_of_thumb": f"At {round(freq_value,2)} {freq_unit}, inductor acts like a {round(imp_value,2)} {imp_unit} resistor"
+        }
+
+    def series_impedance(self, components: list, frequency_hz: float):
+        """
+        Calculate total impedance of series components.
+        
+        Args:
+            components: List of dicts with 'type' ('R', 'C', 'L') and 'value'
+                    Example: [{"type": "R", "value": 1000}, 
+                                {"type": "C", "value": 1e-6},
+                                {"type": "L", "value": 0.001}]
+            frequency_hz: Frequency in Hz
+        
+        Returns:
+            dict: Total impedance with breakdown and auto-formatted units
+        """
+        import math
+        
+        if frequency_hz <= 0:
+            return {"error": "Frequency must be greater than 0"}
+        
+        R_total = 0
+        Xl_total = 0
+        Xc_total = 0
+        
+        breakdown = []
+        
+        for comp in components:
+            comp_type = comp['type'].upper()
+            value = comp['value']
+            
+            if comp_type == 'R':
+                Z = value
+                R_total += value
+                breakdown.append({"type": "Resistor", "value_ohm": value, "impedance_ohm": Z})
+            
+            elif comp_type == 'C':
+                Xc = 1 / (2 * math.pi * frequency_hz * value)
+                Xc_total += Xc
+                cap_val, cap_unit = self.format_capacitance(value)
+                breakdown.append({
+                    "type": "Capacitor", 
+                    "value": f"{cap_val} {cap_unit}", 
+                    "impedance_ohm": round(Xc, 2),
+                    "formula": f"Xc = 1/(2πfC) = {round(Xc,2)}Ω"
+                })
+            
+            elif comp_type == 'L':
+                Xl = 2 * math.pi * frequency_hz * value
+                Xl_total += Xl
+                L_val, L_unit = self.format_inductance(value)
+                breakdown.append({
+                    "type": "Inductor", 
+                    "value": f"{L_val} {L_unit}", 
+                    "impedance_ohm": round(Xl, 2),
+                    "formula": f"XL = 2πfL = {round(Xl,2)}Ω"
+                })
+            
+            else:
+                return {"error": f"Unknown component type: {comp_type}. Use 'R', 'C', or 'L'"}
+        
+        # Net reactance
+        X_net = abs(Xl_total - Xc_total)
+        Z_total = math.sqrt(R_total**2 + X_net**2)
+        phase_angle = math.atan2(Xl_total - Xc_total, R_total) * 180 / math.pi
+        
+        # ============================================================
+        # AUTO-FORMAT FREQUENCY
+        # ============================================================
+        if frequency_hz >= 1_000_000_000:
+            freq_value = frequency_hz / 1_000_000_000
+            freq_unit = "GHz"
+        elif frequency_hz >= 1_000_000:
+            freq_value = frequency_hz / 1_000_000
+            freq_unit = "MHz"
+        elif frequency_hz >= 1000:
+            freq_value = frequency_hz / 1000
+            freq_unit = "kHz"
+        else:
+            freq_value = frequency_hz
+            freq_unit = "Hz"
+        
+        # ============================================================
+        # AUTO-FORMAT TOTAL IMPEDANCE
+        # ============================================================
+        if Z_total >= 1_000_000:
+            Z_value = Z_total / 1_000_000
+            Z_unit = "MΩ"
+        elif Z_total >= 1000:
+            Z_value = Z_total / 1000
+            Z_unit = "kΩ"
+        else:
+            Z_value = Z_total
+            Z_unit = "Ω"
+        
+        # ============================================================
+        # AUTO-FORMAT INDIVIDUAL REACTANCES
+        # ============================================================
+        def format_reactance(x):
+            if x >= 1_000_000:
+                return round(x / 1_000_000, 2), "MΩ"
+            elif x >= 1000:
+                return round(x / 1000, 2), "kΩ"
+            else:
+                return round(x, 2), "Ω"
+        
+        R_val, R_unit = format_reactance(R_total)
+        XL_val, XL_unit = format_reactance(Xl_total)
+        XC_val, XC_unit = format_reactance(Xc_total)
+        
+        return {
+            "frequency": {
+                "value": round(freq_value, 2),
+                "unit": freq_unit,
+                "hz": frequency_hz
+            },
+            "components": breakdown,
+            "totals": {
+                "resistance": {
+                    "value": R_val,
+                    "unit": R_unit,
+                    "ohms": round(R_total, 2)
+                },
+                "inductive_reactance": {
+                    "value": XL_val,
+                    "unit": XL_unit,
+                    "ohms": round(Xl_total, 2)
+                },
+                "capacitive_reactance": {
+                    "value": XC_val,
+                    "unit": XC_unit,
+                    "ohms": round(Xc_total, 2)
+                },
+                "net_reactance": {
+                    "value": round(Xl_total - Xc_total, 2),
+                    "unit": "Ω"
+                },
+                "total_impedance": {
+                    "value": round(Z_value, 2),
+                    "unit": Z_unit,
+                    "ohms": round(Z_total, 2)
+                },
+                "phase_angle_deg": round(phase_angle, 1)
+            },
+            "resonant": abs(Xl_total - Xc_total) < 0.01,  # tolerance for floating point
+            "formula": f"Z = √({R_total}² + ({Xl_total} - {Xc_total})²) = {round(Z_value,2)} {Z_unit}"
+        }
+   
+    def parallel_impedance(self, components: list, frequency_hz: float):
+        """
+        Calculate total impedance of parallel components.
+        
+        Args:
+            components: List of dicts with 'type' ('R', 'C', 'L') and 'value'
+            frequency_hz: Frequency in Hz
+        
+        Returns:
+            dict: Total impedance with formatted output
+        """
+        import math
+        
+        if frequency_hz <= 0:
+            return {"error": "Frequency must be greater than 0"}
+        
+        # Calculate admittances (1/Z)
+        Y_real = 0  # Conductance from resistors
+        Y_imag = 0  # Susceptance from L and C
+        
+        breakdown = []
+        
+        for comp in components:
+            comp_type = comp['type'].upper()
+            value = comp['value']
+            
+            if comp_type == 'R':
+                G = 1 / value
+                Y_real += G
+                breakdown.append({"type": "Resistor", "value_ohm": value, "admittance_s": round(G, 6)})
+            
+            elif comp_type == 'C':
+                Bc = 2 * math.pi * frequency_hz * value
+                Y_imag += Bc
+                cap_val, cap_unit = self.format_capacitance(value)
+                breakdown.append({
+                    "type": "Capacitor", 
+                    "value": f"{cap_val} {cap_unit}", 
+                    "susceptance_s": round(Bc, 4),
+                    "formula": f"Bc = 2πfC = {round(Bc,4)}S"
+                })
+            
+            elif comp_type == 'L':
+                Bl = -1 / (2 * math.pi * frequency_hz * value)
+                Y_imag += Bl
+                L_val, L_unit = self.format_inductance(value)
+                breakdown.append({
+                    "type": "Inductor", 
+                    "value": f"{L_val} {L_unit}", 
+                    "susceptance_s": round(Bl, 4),
+                    "formula": f"BL = -1/(2πfL) = {round(Bl,4)}S"
+                })
+            
+            else:
+                return {"error": f"Unknown component type: {comp_type}. Use 'R', 'C', or 'L'"}
+        
+        # Total impedance from admittance
+        Y_magnitude = math.sqrt(Y_real**2 + Y_imag**2)
+        Z_total = 1 / Y_magnitude if Y_magnitude > 0 else float('inf')
+        phase_angle = math.atan2(Y_imag, Y_real) * 180 / math.pi
+        
+        # ============================================================
+        # AUTO-FORMAT FREQUENCY
+        # ============================================================
+        if frequency_hz >= 1_000_000_000:
+            freq_value = frequency_hz / 1_000_000_000
+            freq_unit = "GHz"
+        elif frequency_hz >= 1_000_000:
+            freq_value = frequency_hz / 1_000_000
+            freq_unit = "MHz"
+        elif frequency_hz >= 1000:
+            freq_value = frequency_hz / 1000
+            freq_unit = "kHz"
+        else:
+            freq_value = frequency_hz
+            freq_unit = "Hz"
+        
+        # ============================================================
+        # AUTO-FORMAT TOTAL IMPEDANCE
+        # ============================================================
+        if Z_total >= 1_000_000:
+            Z_value = Z_total / 1_000_000
+            Z_unit = "MΩ"
+        elif Z_total >= 1000:
+            Z_value = Z_total / 1000
+            Z_unit = "kΩ"
+        else:
+            Z_value = Z_total
+            Z_unit = "Ω"
+        
+        # ============================================================
+        # AUTO-FORMAT ADMITTANCE
+        # ============================================================
+        if Y_magnitude >= 1:
+            Y_value = Y_magnitude
+            Y_unit = "S"
+        elif Y_magnitude >= 1e-3:
+            Y_value = Y_magnitude * 1000
+            Y_unit = "mS"
+        elif Y_magnitude >= 1e-6:
+            Y_value = Y_magnitude * 1_000_000
+            Y_unit = "µS"
+        else:
+            Y_value = Y_magnitude * 1_000_000_000
+            Y_unit = "nS"
+        
+        return {
+            "frequency": {
+                "value": round(freq_value, 2),
+                "unit": freq_unit,
+                "hz": frequency_hz
+            },
+            "components": breakdown,
+            "admittance": {
+                "conductance": {
+                    "value": round(Y_real, 6),
+                    "unit": "S"
+                },
+                "susceptance": {
+                    "value": round(Y_imag, 6),
+                    "unit": "S"
+                },
+                "magnitude": {
+                    "value": round(Y_value, 4),
+                    "unit": Y_unit,
+                    "siemens": round(Y_magnitude, 6)
+                }
+            },
+            "total_impedance": {
+                "value": round(Z_value, 2),
+                "unit": Z_unit,
+                "ohms": round(Z_total, 2)
+            },
+            "phase_angle_deg": round(phase_angle, 1),
+            "formula": f"Z = 1/√(G² + B²) = {round(Z_value,2)} {Z_unit}"
+        }
+
+
+    def format_inductance(self, henries: float):
+        """
+        Auto-format inductance to appropriate unit.
+        
+        Rules:
+            ≥ 1H      → Henry (H)
+            ≥ 1e-3H   → millihenry (mH)
+            ≥ 1e-6H   → microhenry (µH)
+            < 1e-6H   → nanohenry (nH)
+        """
+        if henries >= 1:
+            return round(henries, 2), "H"
+        elif henries >= 1e-3:
+            return round(henries * 1000, 2), "mH"
+        elif henries >= 1e-6:
+            return round(henries * 1_000_000, 2), "µH"
+        else:
+            return round(henries * 1_000_000_000, 2), "nH"
+
     @staticmethod
     def convert_resistance(value: float, from_unit: str, to_unit: str = 'ohm') -> float:
         """
@@ -1106,7 +1688,100 @@ class ElectronicsCalculator:
             return ohms
         else:
             raise ValueError(f"Unknown resistance unit: {to_unit}")
+        
+    def filter_rc_lowpass(self, R: float, C: float, frequency_hz: float = None):
+        """
+        RC Low-pass filter calculator.
+        
+        Args:
+            R: Resistance (Ω)
+            C: Capacitance (F)
+            frequency_hz: Optional - calculate attenuation at this frequency
+        
+        Returns:
+            dict: Cutoff frequency and optional attenuation
+        """
+      
+      
+        if R <= 0:
+            return {"error": f"Resistance must be positive, got {R}"}
+        if C <= 0:
+            return {"error": f"Capacitance must be positive, got {C}"}
+        
+        fc = 1 / (2 * math.pi * R * C)
+        cap_val, cap_unit = self.format_capacitance(C)
+        
+        result = {
+            "type": "RC Low-Pass Filter",
+            "components": {
+                "resistance_ohm": R,
+                "resistance_kohm": round(R/1000, 2),
+                "capacitance": {"value": cap_val, "unit": cap_unit}
+            },
+            "cutoff_frequency_hz": round(fc, 2),
+            "cutoff_frequency_khz": round(fc/1000, 2),
+            "time_constant_s": round(R * C, 6),
+            "formula": f"fc = 1/(2π × {R} × {cap_val}{cap_unit}) = {round(fc,2)}Hz"
+        }
+        
+        # Calculate attenuation at specific frequency if provided
+        if frequency_hz and frequency_hz > 0:
+            f_ratio = frequency_hz / fc
+            atten_linear = 1 / math.sqrt(1 + f_ratio**2)
+            atten_db = 20 * math.log10(atten_linear)
+            result["at_frequency"] = {
+                "frequency_hz": frequency_hz,
+                "gain_linear": round(atten_linear, 4),
+                "gain_db": round(atten_db, 1),
+                "attenuation_percent": round((1 - atten_linear) * 100, 1)
+            }
+        
+        return result
 
+
+    def filter_rc_highpass(self, R: float, C: float, frequency_hz: float = None):
+        """
+        RC High-pass filter calculator.
+        
+        Args:
+            R: Resistance (Ω)
+            C: Capacitance (F)
+            frequency_hz: Optional - calculate attenuation at this frequency
+        
+        Returns:
+            dict: Cutoff frequency and optional attenuation
+        """
+        import math
+        
+        fc = 1 / (2 * math.pi * R * C)
+        cap_val, cap_unit = self.format_capacitance(C)
+        
+        result = {
+            "type": "RC High-Pass Filter",
+            "components": {
+                "resistance_ohm": R,
+                "resistance_kohm": round(R/1000, 2),
+                "capacitance": {"value": cap_val, "unit": cap_unit}
+            },
+            "cutoff_frequency_hz": round(fc, 2),
+            "cutoff_frequency_khz": round(fc/1000, 2),
+            "time_constant_s": round(R * C, 6),
+            "formula": f"fc = 1/(2π × {R} × {cap_val}{cap_unit}) = {round(fc,2)}Hz"
+        }
+        
+        # Calculate attenuation at specific frequency if provided
+        if frequency_hz and frequency_hz > 0:
+            f_ratio = frequency_hz / fc
+            atten_linear = 1 / math.sqrt(1 + (1/f_ratio)**2) if f_ratio > 0 else 0
+            atten_db = 20 * math.log10(atten_linear) if atten_linear > 0 else -999
+            result["at_frequency"] = {
+                "frequency_hz": frequency_hz,
+                "gain_linear": round(atten_linear, 4),
+                "gain_db": round(atten_db, 1),
+                "attenuation_percent": round((1 - atten_linear) * 100, 1)
+            }
+        
+        return result
 
     @staticmethod
     def convert_capacitance(value: float, from_unit: str, to_unit: str = 'f') -> float:
